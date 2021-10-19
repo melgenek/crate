@@ -31,6 +31,9 @@ import org.apache.lucene.index.IndexCommit;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.StepListener;
+import org.elasticsearch.action.admin.cluster.state.ClusterStateAction;
+import org.elasticsearch.action.admin.cluster.state.ClusterStateResponse;
 import org.elasticsearch.action.admin.indices.stats.IndicesStatsResponse;
 import org.elasticsearch.action.admin.indices.stats.ShardStats;
 import org.elasticsearch.action.support.IndicesOptions;
@@ -66,6 +69,7 @@ import org.elasticsearch.snapshots.SnapshotState;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.ConnectTransportException;
 
+import javax.swing.*;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
@@ -146,10 +150,10 @@ public class LogicalReplicationRepository extends AbstractLifecycleComponent imp
     }
 
     @Override
-    public Metadata getSnapshotGlobalMetadata(SnapshotId snapshotId) {
+    public void getSnapshotGlobalMetadata(SnapshotId snapshotId, ActionListener<Metadata> listener) {
         var stateResponse = getPublicationsState();
         var remoteClusterState = getRemoteClusterState(stateResponse.concreteIndices().toArray(new String[0]));
-        return remoteClusterState.metadata();
+        remoteClusterState.metadata();
     }
 
     @Override
@@ -385,11 +389,11 @@ public class LogicalReplicationRepository extends AbstractLifecycleComponent imp
         return logicalReplicationService.getRemoteClusterClient(threadPool, subscriptionName);
     }
 
-    private ClusterState getRemoteClusterState(String... remoteIndices) {
-        return getRemoteClusterState(false, false, remoteIndices);
+    private void getRemoteClusterState(ActionListener<ClusterState> listener, String... remoteIndices) {
+        getRemoteClusterState(false, false, listener, remoteIndices);
     }
 
-    private ClusterState getRemoteClusterState(boolean includeNodes, boolean includeRouting, String... remoteIndices) {
+    private void getRemoteClusterState(boolean includeNodes, boolean includeRouting, ActionListener<ClusterState> listener, String... remoteIndices) {
         var clusterStateRequest = getRemoteClusterClient().admin().cluster().prepareState()
             .clear()
             .setIndices(remoteIndices)
@@ -398,11 +402,21 @@ public class LogicalReplicationRepository extends AbstractLifecycleComponent imp
             .setRoutingTable(includeRouting)
             .setIndicesOptions(IndicesOptions.strictSingleIndexNoExpandForbidClosed())
             .request();
+        getRemoteClusterClient().admin().cluster().execute(
+            ClusterStateAction.INSTANCE, clusterStateRequest, new ActionListener<>() {
 
-        var remoteState = getRemoteClusterClient().admin().cluster().state(clusterStateRequest)
-            .actionGet(REMOTE_CLUSTER_REPO_REQ_TIMEOUT_IN_MILLI_SEC).getState();
-        LOGGER.trace("Successfully fetched the cluster state from remote repository {}", remoteState);
-        return remoteState;
+                @Override
+                public void onResponse(ClusterStateResponse clusterStateResponse) {
+                    ClusterState remoteState = clusterStateResponse.getState();
+                    LOGGER.trace("Successfully fetched the cluster state from remote repository {}", remoteState);
+                    listener.onResponse(clusterStateResponse.getState());
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    listener.onFailure(e);
+                }
+            });
     }
 
     private PublicationsStateAction.Response getPublicationsState() {
