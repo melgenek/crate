@@ -21,6 +21,7 @@
 
 package io.crate.replication.logical.repository;
 
+import io.crate.common.unit.TimeValue;
 import io.crate.replication.logical.LogicalReplicationService;
 import io.crate.replication.logical.action.GetStoreMetadataAction;
 import io.crate.replication.logical.action.PublicationsStateAction;
@@ -280,6 +281,7 @@ public class LogicalReplicationRepository extends AbstractLifecycleComponent imp
         assert SNAPSHOT_ID.equals(snapshotId) : "SubscriptionRepository only supports " + SNAPSHOT_ID + " as the SnapshotId";
         var remoteIndices = shardIndexIds.values().stream().map(IndexId::getName).toArray(String[]::new);
         StepListener<IndicesStatsResponse> indicesStatsResponseStepListener = new StepListener<>();
+        // timeout REMOTE_CLUSTER_REPO_REQ_TIMEOUT_IN_MILLI_SEC
         getRemoteClusterClient().admin().indices().prepareStats(remoteIndices).clear().setStore(true).execute(indicesStatsResponseStepListener);
         indicesStatsResponseStepListener.whenComplete(response -> {
             var result = new HashMap<ShardId, IndexShardSnapshotStatus>();
@@ -362,6 +364,7 @@ public class LogicalReplicationRepository extends AbstractLifecycleComponent imp
             var remoteClient = getRemoteClusterClient();
 
             // Gets the remote store metadata
+            // set timeout REMOTE_CLUSTER_REPO_REQ_TIMEOUT_IN_MILLI_SEC
             StepListener<GetStoreMetadataAction.Response> responseStepListener= new StepListener<>();
             remoteClient.execute(GetStoreMetadataAction.INSTANCE, getStoreMetadataRequest, responseStepListener);
             responseStepListener.whenComplete(metadataResponse -> {
@@ -445,6 +448,7 @@ public class LogicalReplicationRepository extends AbstractLifecycleComponent imp
             .setNodes(includeNodes)
             .setRoutingTable(includeRouting)
             .setIndicesOptions(IndicesOptions.strictSingleIndexNoExpandForbidClosed())
+            .setWaitForTimeOut(TimeValue.timeValueMillis(REMOTE_CLUSTER_REPO_REQ_TIMEOUT_IN_MILLI_SEC))
             .request();
         getRemoteClusterClient().admin().cluster().execute(
             ClusterStateAction.INSTANCE, clusterStateRequest, new ActionListener<>() {

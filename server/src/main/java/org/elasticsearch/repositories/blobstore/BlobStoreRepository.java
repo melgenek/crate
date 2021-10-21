@@ -63,6 +63,7 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionRunnable;
 import org.elasticsearch.action.StepListener;
 import org.elasticsearch.action.support.GroupedActionListener;
+import org.elasticsearch.action.support.PlainActionFuture;
 import org.elasticsearch.cluster.ClusterStateUpdateTask;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.Metadata;
@@ -1312,8 +1313,10 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
                         }, () -> filterRepositoryDataStep.onResponse(repositoryData.withVersions(updatedVersionMap))),
                     snapshotIdsWithoutVersion.size());
                 for (SnapshotId snapshotId : snapshotIdsWithoutVersion) {
-                    threadPool().executor(ThreadPool.Names.SNAPSHOT).execute(ActionRunnable.run(loadAllVersionsListener, () ->
-                        updatedVersionMap.put(snapshotId, getSnapshotInfo(snapshotId).version())));
+                    threadPool().executor(ThreadPool.Names.SNAPSHOT).execute(ActionRunnable.run(loadAllVersionsListener, () -> {
+                        SnapshotInfo foo = getSnapshotInfo(snapshotId);
+                        updatedVersionMap.put(snapshotId, foo.version());
+                    }));
                 }
             } else {
                 filterRepositoryDataStep.onResponse(repositoryData);

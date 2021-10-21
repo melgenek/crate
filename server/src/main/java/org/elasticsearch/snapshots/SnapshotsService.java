@@ -358,7 +358,8 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     hasOldFormatSnapshots = snapshotIds.stream().filter(snapshotId -> snapshotId.equals(excluded) == false).anyMatch(
                         snapshotId -> {
                             final Version known = repositoryData.getVersion(snapshotId);
-                            return (known == null ? repository.getSnapshotInfo(snapshotId).version() : known)
+                            SnapshotInfo foo = repository.getSnapshotInfo(snapshotId);
+                            return (known == null ? foo.version() : known)
                                 .before(SHARD_GEN_IN_REPO_DATA_VERSION);
                         });
                 } catch (SnapshotMissingException e) {

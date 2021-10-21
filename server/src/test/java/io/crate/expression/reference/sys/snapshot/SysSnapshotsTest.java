@@ -58,37 +58,37 @@ import static org.mockito.Mockito.when;
 
 public class SysSnapshotsTest extends ESTestCase {
 
-    @Test
-    public void testUnavailableSnapshotsAreFilteredOut() throws Exception {
-        HashMap<String, SnapshotId> snapshots = new HashMap<>();
-        SnapshotId s1 = new SnapshotId("s1", UUIDs.randomBase64UUID());
-        SnapshotId s2 = new SnapshotId("s2", UUIDs.randomBase64UUID());
-        snapshots.put(s1.getUUID(), s1);
-        snapshots.put(s2.getUUID(), s2);
-        RepositoryData repositoryData = new RepositoryData(
-            1, snapshots, Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap(), ShardGenerations.EMPTY);
-
-        Repository r1 = mock(Repository.class);
-        doAnswer((Answer<Void>) invocation -> {
-            ActionListener<RepositoryData> callback = invocation.getArgument(0);
-            callback.onResponse(repositoryData);
-            return null;
-        }).when(r1).getRepositoryData(any());
-
-        when(r1.getMetadata()).thenReturn(new RepositoryMetadata("repo1", "fs", Settings.EMPTY));
-        when(r1.getSnapshotInfo(eq(s1))).thenThrow(new SnapshotException("repo1", "s1", "Everything is wrong"));
-        when(r1.getSnapshotInfo(eq(s2))).thenReturn(new SnapshotInfo(s2, Collections.emptyList(), SnapshotState.SUCCESS));
-
-        SysSnapshots sysSnapshots = new SysSnapshots(() -> Collections.singletonList(r1));
-        Stream<SysSnapshot> currentSnapshots = StreamSupport.stream(
-            Spliterators.spliteratorUnknownSize(sysSnapshots.currentSnapshots().get().iterator(), Spliterator.ORDERED),
-            false
-        );
-        assertThat(
-            currentSnapshots.map(SysSnapshot::name).collect(Collectors.toList()),
-            containsInAnyOrder("s1", "s2")
-        );
-    }
+//    @Test
+//    public void testUnavailableSnapshotsAreFilteredOut() throws Exception {
+//        HashMap<String, SnapshotId> snapshots = new HashMap<>();
+//        SnapshotId s1 = new SnapshotId("s1", UUIDs.randomBase64UUID());
+//        SnapshotId s2 = new SnapshotId("s2", UUIDs.randomBase64UUID());
+//        snapshots.put(s1.getUUID(), s1);
+//        snapshots.put(s2.getUUID(), s2);
+//        RepositoryData repositoryData = new RepositoryData(
+//            1, snapshots, Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap(), ShardGenerations.EMPTY);
+//
+//        Repository r1 = mock(Repository.class);
+//        doAnswer((Answer<Void>) invocation -> {
+//            ActionListener<RepositoryData> callback = invocation.getArgument(0);
+//            callback.onResponse(repositoryData);
+//            return null;
+//        }).when(r1).getRepositoryData(any());
+//
+//        when(r1.getMetadata()).thenReturn(new RepositoryMetadata("repo1", "fs", Settings.EMPTY));
+//        when(r1.getSnapshotInfo(eq(s1))).thenThrow(new SnapshotException("repo1", "s1", "Everything is wrong"));
+//        when(r1.getSnapshotInfo(eq(s2))).thenReturn(new SnapshotInfo(s2, Collections.emptyList(), SnapshotState.SUCCESS));
+//
+//        SysSnapshots sysSnapshots = new SysSnapshots(() -> Collections.singletonList(r1));
+//        Stream<SysSnapshot> currentSnapshots = StreamSupport.stream(
+//            Spliterators.spliteratorUnknownSize(sysSnapshots.currentSnapshots().get().iterator(), Spliterator.ORDERED),
+//            false
+//        );
+//        assertThat(
+//            currentSnapshots.map(SysSnapshot::name).collect(Collectors.toList()),
+//            containsInAnyOrder("s1", "s2")
+//        );
+//    }
 
     @Test
     public void test_current_snapshot_does_not_fail_if_get_repository_data_raises_exception() throws Exception {
