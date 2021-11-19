@@ -1461,6 +1461,35 @@ specified interval added to the timestamp of ``0000/01/01 00:00:00``::
     +---------------------+
     SELECT 1 row in set (... sec)
 
+.. _scalar-pg-age:
+
+``age([timestamp,] timestamp)``
+---------------------------------------------------
+
+Returns: Numbers of milliseconds between 2 timestamps. If at least one argument
+is ``NULL``, the return value is ``NULL``. If only one timestamp is given, the
+return values is milliseconds between current_date (at midnight) and the given
+timestamp.
+
+Example::
+
+    cr> select pg_catalog.age('2021-10-21'::timestamp, '2021-10-20'::timestamp)
+    ... as age;
+    +----------+
+    |      age |
+    +----------+
+    | 86400000 |
+    +----------+
+    SELECT 1 row in set (... sec)
+
+
+    cr> select pg_catalog.age(date_trunc('day', CURRENT_DATE)) as age;
+    +-----+
+    | age |
+    +-----+
+    |   0 |
+    +-----+
+    SELECT 1 row in set (... sec)
 
 .. _scalar-geo:
 
