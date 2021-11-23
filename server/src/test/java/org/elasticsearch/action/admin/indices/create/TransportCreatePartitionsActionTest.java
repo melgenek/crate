@@ -59,7 +59,7 @@ public class TransportCreatePartitionsActionTest extends SQLIntegrationTestCase 
         List<String> indices = Arrays.asList("index1", "index2", "index3", "index4");
         AcknowledgedResponse response = action.execute(
             new CreatePartitionsRequest(indices, UUID.randomUUID())
-        ).actionGet();
+        ).get();
         assertThat(response.isAcknowledged(), is(true));
 
         Metadata indexMetadata = internalCluster().clusterService().state().metadata();
@@ -107,7 +107,7 @@ public class TransportCreatePartitionsActionTest extends SQLIntegrationTestCase 
         List<String> indices = Arrays.asList("index1", "index2", "index3", "index1");
         AcknowledgedResponse response = action.execute(
             new CreatePartitionsRequest(indices, UUID.randomUUID())
-        ).actionGet();
+        ).get();
         assertThat(response.isAcknowledged(), is(true));
         Metadata indexMetadata = internalCluster().clusterService().state().metadata();
         for (String index : indices) {
@@ -115,14 +115,14 @@ public class TransportCreatePartitionsActionTest extends SQLIntegrationTestCase 
         }
         AcknowledgedResponse response2 = action.execute(
             new CreatePartitionsRequest(indices, UUID.randomUUID())
-        ).actionGet();
+        ).get();
         assertThat(response2.isAcknowledged(), is(true));
     }
 
     @Test
     public void testEmpty() throws Exception {
         AcknowledgedResponse response = action.execute(
-            new CreatePartitionsRequest(List.of(), UUID.randomUUID())).actionGet();
+            new CreatePartitionsRequest(List.of(), UUID.randomUUID())).get();
         assertThat(response.isAcknowledged(), is(true));
     }
 
@@ -130,7 +130,7 @@ public class TransportCreatePartitionsActionTest extends SQLIntegrationTestCase 
     public void testCreateInvalidName() throws Exception {
         CreatePartitionsRequest createPartitionsRequest = new CreatePartitionsRequest(Arrays.asList("valid", "invalid/#haha"), UUID.randomUUID());
         Assertions.assertThrows(InvalidIndexNameException.class,
-                                () -> action.execute(createPartitionsRequest).actionGet(),
+                                () -> action.execute(createPartitionsRequest).get(),
                                 "Invalid index name [invalid/#haha], must not contain the following characters [ , \", *, \\, <, |, ,, >, /, ?]"
         );
         // if one name is invalid no index is created
