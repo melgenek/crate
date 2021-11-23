@@ -109,7 +109,7 @@ public class FakeTcpChannel implements TcpChannel {
 
     @Override
     public void addCloseListener(ActionListener<Void> listener) {
-        closeContext.addListener(ActionListener.toBiConsumer(listener));
+        closeContext.addListener(listener);
     }
 
     @Override

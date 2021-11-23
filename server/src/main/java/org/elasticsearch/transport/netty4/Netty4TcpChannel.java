@@ -95,12 +95,12 @@ public class Netty4TcpChannel implements TcpChannel {
 
     @Override
     public void addCloseListener(ActionListener<Void> listener) {
-        closeContext.whenComplete(ActionListener.toBiConsumer(listener));
+        closeContext.whenComplete(listener);
     }
 
     @Override
     public void addConnectListener(ActionListener<Void> listener) {
-        connectContext.addListener(ActionListener.toBiConsumer(listener));
+        connectContext.addListener(listener);
     }
 
     @Override

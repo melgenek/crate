@@ -20,6 +20,8 @@
 package org.elasticsearch.action;
 
 import io.crate.common.CheckedSupplier;
+import io.crate.exceptions.Exceptions;
+
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.common.CheckedConsumer;
 import io.crate.common.CheckedFunction;
@@ -33,7 +35,7 @@ import java.util.function.Consumer;
 /**
  * A listener for action responses or failures.
  */
-public interface ActionListener<Response> {
+public interface ActionListener<Response> extends BiConsumer<Response, Throwable> {
     /**
      * Handle action response. This response may constitute a failure or a
      * success but it is up to the listener to make that decision.
@@ -44,6 +46,15 @@ public interface ActionListener<Response> {
      * A failure caused by an exception at some phase of the task.
      */
     void onFailure(Exception e);
+
+    @Override
+    default void accept(Response response, Throwable error) {
+        if (error != null) {
+            onResponse(response);
+        } else {
+            onFailure(Exceptions.toException(error));
+        }
+    }
 
     /**
      * Creates a listener that listens for a response (or failure) and executes the
@@ -160,29 +171,6 @@ public interface ActionListener<Response> {
         return wrap(r -> listener.onResponse(fn.apply(r)), listener::onFailure);
     }
 
-    /**
-     * Converts a listener to a {@link BiConsumer} for compatibility with the {@link java.util.concurrent.CompletableFuture}
-     * api.
-     *
-     * @param listener that will be wrapped
-     * @param <Response> the type of the response
-     * @return a bi consumer that will complete the wrapped listener
-     */
-    static <Response> BiConsumer<Response, Throwable> toBiConsumer(ActionListener<Response> listener) {
-        return (response, throwable) -> {
-            if (throwable == null) {
-                listener.onResponse(response);
-            } else {
-                if (throwable instanceof Exception) {
-                    listener.onFailure((Exception) throwable);
-                } else if (throwable instanceof Error) {
-                    throw (Error) throwable;
-                } else {
-                    throw new AssertionError("Should have been either Error or Exception", throwable);
-                }
-            }
-        };
-    }
 
     /**
      * Wraps a given listener and returns a new listener which executes the provided {@code runAfter}
