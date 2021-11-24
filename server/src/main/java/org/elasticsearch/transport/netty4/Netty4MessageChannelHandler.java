@@ -44,7 +44,7 @@ import java.util.Queue;
  * A handler (must be the last one!) that does size based frame decoding and forwards the actual message
  * to the relevant action.
  */
-final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
+public final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
 
     private final Netty4Transport transport;
 
@@ -53,7 +53,7 @@ final class Netty4MessageChannelHandler extends ChannelDuplexHandler {
     private WriteOperation currentWrite;
     private final InboundPipeline pipeline;
 
-    Netty4MessageChannelHandler(PageCacheRecycler recycler, Netty4Transport transport) {
+    public Netty4MessageChannelHandler(PageCacheRecycler recycler, Netty4Transport transport) {
         this.transport = transport;
         final ThreadPool threadPool = transport.getThreadPool();
         final Transport.RequestHandlers requestHandlers = transport.getRequestHandlers();
