@@ -21,9 +21,12 @@
 
 package io.crate.protocols.postgres;
 
+import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Singleton;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.util.PageCacheRecycler;
+import org.elasticsearch.transport.netty4.Netty4Transport;
 
 import io.crate.netty.NettyBootstrap;
 
@@ -39,15 +42,21 @@ public class PgClientFactory {
 
     private final Settings settings;
     private final NettyBootstrap nettyBootstrap;
+    private final Netty4Transport transport;
+    private final PageCacheRecycler pageCacheRecycler;
 
     @Inject
     public PgClientFactory(Settings settings,
+                           Netty4Transport transport,
+                           PageCacheRecycler pageCacheRecycler,
                            NettyBootstrap nettyBootstrap) {
         this.settings = settings;
+        this.transport = transport;
+        this.pageCacheRecycler = pageCacheRecycler;
         this.nettyBootstrap = nettyBootstrap;
     }
 
-    public PgClient createClient(String host) {
-        return new PgClient(settings, nettyBootstrap, host);
+    public PgClient createClient(DiscoveryNode host) {
+        return new PgClient(settings, nettyBootstrap, transport, pageCacheRecycler, host);
     }
 }

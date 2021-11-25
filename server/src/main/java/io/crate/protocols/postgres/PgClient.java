@@ -28,10 +28,16 @@ import java.net.InetSocketAddress;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
+import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.util.PageCacheRecycler;
+import org.elasticsearch.transport.ConnectionProfile;
 import org.elasticsearch.transport.RemoteConnectionParser;
 import org.elasticsearch.transport.Transport.Connection;
 import org.elasticsearch.transport.TransportSettings;
+import org.elasticsearch.transport.netty4.Netty4MessageChannelHandler;
+import org.elasticsearch.transport.netty4.Netty4Transport;
 
 import io.crate.common.collections.BorrowedItem;
 import io.crate.netty.NettyBootstrap;
@@ -42,6 +48,7 @@ import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
+import io.netty.channel.ChannelPipeline;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
@@ -50,7 +57,9 @@ public class PgClient implements Closeable {
 
     private final Settings settings;
     private final NettyBootstrap nettyBootstrap;
-    private final InetSocketAddress remoteAddress;
+    private final PageCacheRecycler pageCacheRecycler;
+    private final Netty4Transport transport;
+    private final DiscoveryNode host;
 
     private BorrowedItem<EventLoopGroup> eventLoopGroup;
     private Bootstrap bootstrap;
@@ -59,10 +68,14 @@ public class PgClient implements Closeable {
 
     public PgClient(Settings nodeSettings,
                     NettyBootstrap nettyBootstrap,
-                    String host) {
+                    Netty4Transport transport,
+                    PageCacheRecycler pageCacheRecycler,
+                    DiscoveryNode host) {
         this.settings = nodeSettings;
         this.nettyBootstrap = nettyBootstrap;
-        this.remoteAddress = RemoteConnectionParser.parseConfiguredAddress(host);
+        this.pageCacheRecycler = pageCacheRecycler;
+        this.transport = transport;
+        this.host = host;
     }
 
     public CompletableFuture<Connection> connect() {
@@ -74,8 +87,14 @@ public class PgClient implements Closeable {
         bootstrap.option(ChannelOption.SO_KEEPALIVE, TransportSettings.TCP_KEEP_ALIVE.get(settings));
 
         CompletableFuture<Connection> result = new CompletableFuture<>();
-        bootstrap.handler(new ClientChannelInitializer(result));
-        bootstrap.remoteAddress(remoteAddress);
+        bootstrap.handler(new ClientChannelInitializer(
+            settings,
+            host,
+            transport,
+            pageCacheRecycler,
+            result
+        ));
+        bootstrap.remoteAddress(host.getAddress().address());
         ChannelFuture connect = bootstrap.connect();
         channel = connect.channel();
 
@@ -103,24 +122,51 @@ public class PgClient implements Closeable {
 
     static class ClientChannelInitializer extends ChannelInitializer<Channel> {
 
+        private final Settings settings;
+        private final DiscoveryNode node;
         private final CompletableFuture<Connection> result;
+        private final Netty4Transport transport;
+        private final PageCacheRecycler pageCacheRecycler;
 
-        public ClientChannelInitializer(CompletableFuture<Connection> result) {
+        public ClientChannelInitializer(Settings settings,
+                                        DiscoveryNode node,
+                                        Netty4Transport transport,
+                                        PageCacheRecycler pageCacheRecycler,
+                                        CompletableFuture<Connection> result) {
+            this.settings = settings;
+            this.node = node;
+            this.transport = transport;
+            this.pageCacheRecycler = pageCacheRecycler;
             this.result = result;
         }
 
         @Override
         protected void initChannel(Channel ch) throws Exception {
-            ch.pipeline().addLast("decoder", new Decoder());
-            ch.pipeline().addLast("dispatcher", new Handler(result));
+            ChannelPipeline pipeline = ch.pipeline();
+            pipeline.addLast("decoder", new Decoder());
+
+            Handler handler = new Handler(settings, node, transport, pageCacheRecycler, result);
+            ch.pipeline().addLast("dispatcher", handler);
         }
     }
 
     static class Handler extends SimpleChannelInboundHandler<ByteBuf> {
 
         private final CompletableFuture<Connection> result;
+        private final Netty4Transport transport;
+        private final PageCacheRecycler pageCacheRecycler;
+        private final Settings settings;
+        private final DiscoveryNode node;
 
-        public Handler(CompletableFuture<Connection> result) {
+        public Handler(Settings settings,
+                       DiscoveryNode node,
+                       Netty4Transport transport,
+                       PageCacheRecycler pageCacheRecycler,
+                       CompletableFuture<Connection> result) {
+            this.settings = settings;
+            this.node = node;
+            this.transport = transport;
+            this.pageCacheRecycler = pageCacheRecycler;
             this.result = result;
         }
 
@@ -137,14 +183,24 @@ public class PgClient implements Closeable {
             switch (msgType) {
                 case 'R' -> handleAuth(msg);
                 case 'S' -> handleParameterStatus(msg);
-                case 'Z' -> handleReadyForQuery(msg);
+                case 'Z' -> handleReadyForQuery(ctx.channel(), msg);
                 default -> throw new IllegalStateException("Unexpected message type: " + msgType);
             }
         }
 
-        private void handleReadyForQuery(ByteBuf msg) {
+        private void handleReadyForQuery(Channel channel, ByteBuf msg) {
             byte transactionStatus = msg.readByte();
             System.out.println("transactionStatus=" + (char) transactionStatus);
+
+            channel.pipeline().remove("decoder");
+            channel.pipeline().remove("dispatcher");
+
+            // TODO: Probably wrong to use existing Netty4Transport;
+            // Need to create a transport/pass along components based on *this*
+            var handler = new Netty4MessageChannelHandler(pageCacheRecycler, transport);
+            channel.pipeline().addLast("dispatcher", handler);
+
+            result.completeExceptionally(new UnsupportedOperationException("NYI"));
         }
 
         private void handleParameterStatus(ByteBuf msg) {

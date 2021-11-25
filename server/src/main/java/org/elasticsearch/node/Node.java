@@ -531,7 +531,7 @@ public class Node implements Closeable {
             final GatewayMetaState gatewayMetaState = new GatewayMetaState();
             final HttpServerTransport httpServerTransport = newHttpTransport(networkModule);
 
-            PgClientFactory pgClientFactory = new PgClientFactory(settings, nettyBootstrap);
+            PgClientFactory pgClientFactory = new PgClientFactory(settings, transport, pageCacheRecycler, nettyBootstrap);
             RemoteClusters remoteClusters = new RemoteClusters(settings, threadPool, pgClientFactory, transportService);
             final LogicalReplicationService logicalReplicationService = new LogicalReplicationService(
                 settings,

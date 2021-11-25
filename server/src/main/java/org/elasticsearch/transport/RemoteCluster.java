@@ -30,7 +30,11 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 import org.elasticsearch.Version;
+import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.ActionListenerResponseHandler;
+import org.elasticsearch.action.ActionType;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.client.support.AbstractClient;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Settings;
@@ -40,6 +44,7 @@ import org.elasticsearch.threadpool.ThreadPool;
 import io.crate.action.FutureActionListener;
 import io.crate.common.collections.Lists2;
 import io.crate.common.io.IOUtils;
+import io.crate.protocols.postgres.PgClient;
 import io.crate.protocols.postgres.PgClientFactory;
 import io.crate.replication.logical.metadata.ConnectionInfo;
 import io.crate.types.DataTypes;
@@ -109,8 +114,8 @@ public class RemoteCluster implements Closeable {
         this.connectionProfile = ConnectionProfile.buildDefaultConnectionProfile(settings);
         this.connectionInfo = connectionInfo;
         this.transportService = transportService;
-        this.connectionStrategy = REMOTE_CONNECTION_MODE.get(settings);
-        this.seedNodes = Lists2.map(REMOTE_CLUSTER_SEEDS.get(settings), this::resolveSeedNode);
+        this.connectionStrategy = REMOTE_CONNECTION_MODE.get(connectionInfo.settings());
+        this.seedNodes = Lists2.map(REMOTE_CLUSTER_SEEDS.get(settings), this::toDiscoveryNode);
     }
 
     public Client client() {
@@ -135,7 +140,33 @@ public class RemoteCluster implements Closeable {
     }
 
     private CompletableFuture<Client> connectPgTunnel() {
-        return CompletableFuture.failedFuture(new UnsupportedOperationException("PG tunnel isn't implemented yet"));
+        List<String> hosts = connectionInfo.hosts();
+        if (hosts.isEmpty()) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("No hosts configured for pg tunnel"));
+        }
+        PgClient client = pgClientFactory.createClient(toDiscoveryNode(hosts.get(0)));
+        // TODO: move to inner static class or something
+        return client.connect().thenApply(connection -> new AbstractClient(settings, threadPool) {
+
+            protected <Request extends TransportRequest, Response extends TransportResponse> void doExecute(
+                    ActionType<Response> action,
+                    Request request,
+                    ActionListener<Response> listener) {
+
+                transportService.sendRequest(
+                    connection,
+                    action.name(),
+                    request,
+                    TransportRequestOptions.EMPTY,
+                    new ActionListenerResponseHandler<>(listener, action.getResponseReader())
+                );
+            }
+
+            @Override
+            public void close() {
+                connection.close();
+            };
+        });
     }
 
     private CompletableFuture<Client> connectSniff() {
@@ -152,7 +183,7 @@ public class RemoteCluster implements Closeable {
         return listener;
     }
 
-    private DiscoveryNode resolveSeedNode(String seedNode) {
+    private DiscoveryNode toDiscoveryNode(String seedNode) {
         TransportAddress transportAddress = new TransportAddress(RemoteConnectionParser.parseConfiguredAddress(seedNode));
         return new DiscoveryNode(
             clusterName + "#" + transportAddress.toString(),
