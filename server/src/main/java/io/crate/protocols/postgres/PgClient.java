@@ -32,11 +32,16 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.PageCacheRecycler;
+import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.transport.ChannelsConnectedListener;
 import org.elasticsearch.transport.ConnectionProfile;
+import org.elasticsearch.transport.InboundPipeline;
 import org.elasticsearch.transport.RemoteConnectionParser;
 import org.elasticsearch.transport.Transport.Connection;
+import org.elasticsearch.transport.Transport.RequestHandlers;
 import org.elasticsearch.transport.TransportSettings;
 import org.elasticsearch.transport.netty4.Netty4MessageChannelHandler;
+import org.elasticsearch.transport.netty4.Netty4TcpChannel;
 import org.elasticsearch.transport.netty4.Netty4Transport;
 
 import io.crate.common.collections.BorrowedItem;
@@ -57,8 +62,8 @@ public class PgClient implements Closeable {
 
     private final Settings settings;
     private final NettyBootstrap nettyBootstrap;
-    private final PageCacheRecycler pageCacheRecycler;
     private final Netty4Transport transport;
+    private final PageCacheRecycler pageCacheRecycler;
     private final DiscoveryNode host;
 
     private BorrowedItem<EventLoopGroup> eventLoopGroup;
@@ -73,8 +78,8 @@ public class PgClient implements Closeable {
                     DiscoveryNode host) {
         this.settings = nodeSettings;
         this.nettyBootstrap = nettyBootstrap;
-        this.pageCacheRecycler = pageCacheRecycler;
         this.transport = transport;
+        this.pageCacheRecycler = pageCacheRecycler;
         this.host = host;
     }
 
@@ -95,8 +100,15 @@ public class PgClient implements Closeable {
             result
         ));
         bootstrap.remoteAddress(host.getAddress().address());
-        ChannelFuture connect = bootstrap.connect();
-        channel = connect.channel();
+        ChannelFuture connectFuture = bootstrap.connect();
+        channel = connectFuture.channel();
+        Netty4TcpChannel nettyChannel = new Netty4TcpChannel(
+            channel,
+            false,
+            "default",
+            connectFuture
+        );
+        channel.attr(Netty4Transport.CHANNEL_KEY).set(nettyChannel);
 
         ByteBuf buffer = channel.alloc().buffer();
         /// TODO: user must come from connectionInfo
@@ -124,8 +136,8 @@ public class PgClient implements Closeable {
 
         private final Settings settings;
         private final DiscoveryNode node;
-        private final CompletableFuture<Connection> result;
         private final Netty4Transport transport;
+        private final CompletableFuture<Connection> result;
         private final PageCacheRecycler pageCacheRecycler;
 
         public ClientChannelInitializer(Settings settings,
@@ -153,10 +165,10 @@ public class PgClient implements Closeable {
     static class Handler extends SimpleChannelInboundHandler<ByteBuf> {
 
         private final CompletableFuture<Connection> result;
-        private final Netty4Transport transport;
         private final PageCacheRecycler pageCacheRecycler;
         private final Settings settings;
         private final DiscoveryNode node;
+        private final Netty4Transport transport;
 
         public Handler(Settings settings,
                        DiscoveryNode node,
@@ -195,11 +207,32 @@ public class PgClient implements Closeable {
             channel.pipeline().remove("decoder");
             channel.pipeline().remove("dispatcher");
 
-            // TODO: Probably wrong to use existing Netty4Transport;
-            // Need to create a transport/pass along components based on *this*
-            var handler = new Netty4MessageChannelHandler(pageCacheRecycler, transport);
+            ThreadPool threadPool = transport.getThreadPool();
+            RequestHandlers requestHandlers = transport.getRequestHandlers();
+            var inboundPipeline = new InboundPipeline(
+                transport.getVersion(),
+                transport.getStatsTracker(),
+                pageCacheRecycler,
+                threadPool::relativeTimeInMillis,
+                transport.getInflightBreaker(),
+                requestHandlers::getHandler,
+                transport::inboundMessage // TODO: use *this* ?
+            );
+            // var handler = new Netty4MessageChannelHandler(inboundPipeline, (tcpChannel, err) -> {});
+            //
             channel.pipeline().addLast("dispatcher", handler);
 
+
+            // TODO: this would initialize a new channel using the nettyTransport,
+            // we already got a channel that should be re-used instead.
+            // Either use
+            //      new ChannelsConnectedListener(tcpTransport, node, connectionProfile, channels, listener)
+            // Or wrap transport and override `initiateChannel`
+            // transport.openConnection(
+            //     node,
+            //     ConnectionProfile.buildDefaultConnectionProfile(settings),
+            //     ActionListener.setCompletableFuture(result)
+            // );
             result.completeExceptionally(new UnsupportedOperationException("NYI"));
         }
 
