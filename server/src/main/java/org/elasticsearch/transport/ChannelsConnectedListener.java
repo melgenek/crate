@@ -38,18 +38,27 @@ public final class ChannelsConnectedListener implements ActionListener<Void> {
         if (countDown.countDown()) {
             final TcpChannel handshakeChannel = channels.get(0);
             try {
-                this.tcpTransport.executeHandshake(node, handshakeChannel, connectionProfile, ActionListener.wrap(version -> {
-                    NodeChannels nodeChannels = this.tcpTransport.new NodeChannels(node, channels, connectionProfile, version);
-                    long relativeMillisTime = this.tcpTransport.threadPool.relativeTimeInMillis();
-                    nodeChannels.channels.forEach(ch -> {
-                        // Mark the channel init time
-                        ch.getChannelStats().markAccessed(relativeMillisTime);
-                        ch.addCloseListener(ActionListener.wrap(nodeChannels::close));
-                    });
-                    this.tcpTransport.keepAlive.registerNodeConnection(nodeChannels.channels, connectionProfile);
-                    listener.onResponse(nodeChannels);
-                }, e -> closeAndFail(e instanceof ConnectTransportException ?
-                    e : new ConnectTransportException(node, "general node connection failure", e))));
+                this.tcpTransport.executeHandshake(
+                    node,
+                    handshakeChannel,
+                    connectionProfile,
+                    ActionListener.wrap(
+                        version -> {
+                            NodeChannels nodeChannels = this.tcpTransport.new NodeChannels(node, channels, connectionProfile, version);
+                            long relativeMillisTime = this.tcpTransport.threadPool.relativeTimeInMillis();
+                            nodeChannels.channels.forEach(ch -> {
+                                // Mark the channel init time
+                                ch.getChannelStats().markAccessed(relativeMillisTime);
+                                ch.addCloseListener(ActionListener.wrap(nodeChannels::close));
+                            });
+                            this.tcpTransport.keepAlive.registerNodeConnection(nodeChannels.channels, connectionProfile);
+                            listener.onResponse(nodeChannels);
+                        },
+                        e -> {
+                            closeAndFail(e instanceof ConnectTransportException ? e : new ConnectTransportException(node, "general node connection failure", e));
+                        }
+                    )
+                );
             } catch (Exception ex) {
                 closeAndFail(ex);
             }

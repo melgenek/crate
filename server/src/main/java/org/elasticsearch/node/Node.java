@@ -533,12 +533,14 @@ public class Node implements Closeable {
 
             PgClientFactory pgClientFactory = new PgClientFactory(settings, transport, pageCacheRecycler, nettyBootstrap);
             RemoteClusters remoteClusters = new RemoteClusters(settings, threadPool, pgClientFactory, transportService);
+            resourcesToClose.add(remoteClusters);
             final LogicalReplicationService logicalReplicationService = new LogicalReplicationService(
                 settings,
                 clusterService,
                 remoteClusters,
                 threadPool
             );
+            resourcesToClose.add(logicalReplicationService);
 
             RepositoriesModule repositoriesModule = new RepositoriesModule(
                 this.environment,

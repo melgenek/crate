@@ -24,7 +24,7 @@ package io.crate.protocols.postgres;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.net.InetSocketAddress;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
@@ -32,17 +32,19 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.PageCacheRecycler;
-import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.ChannelsConnectedListener;
 import org.elasticsearch.transport.ConnectionProfile;
-import org.elasticsearch.transport.InboundPipeline;
-import org.elasticsearch.transport.RemoteConnectionParser;
+import org.elasticsearch.transport.TcpChannel;
+import org.elasticsearch.transport.Transport;
 import org.elasticsearch.transport.Transport.Connection;
-import org.elasticsearch.transport.Transport.RequestHandlers;
+import org.elasticsearch.transport.TransportException;
+import org.elasticsearch.transport.TransportRequest;
+import org.elasticsearch.transport.TransportRequestOptions;
 import org.elasticsearch.transport.TransportSettings;
 import org.elasticsearch.transport.netty4.Netty4MessageChannelHandler;
 import org.elasticsearch.transport.netty4.Netty4TcpChannel;
 import org.elasticsearch.transport.netty4.Netty4Transport;
+import org.elasticsearch.transport.netty4.Netty4Utils;
 
 import io.crate.common.collections.BorrowedItem;
 import io.crate.netty.NettyBootstrap;
@@ -112,22 +114,22 @@ public class PgClient implements Closeable {
 
         ByteBuf buffer = channel.alloc().buffer();
         /// TODO: user must come from connectionInfo
-        ClientMessages.sendStartupMessage(buffer, "doc", Map.of("user", "crate"));
+        ClientMessages.sendStartupMessage(buffer, "doc", Map.of("user", "crate", "CrateDBTransport", "true"));
         channel.writeAndFlush(buffer);
         return result;
     }
 
     @Override
     public void close() throws IOException {
+        if (bootstrap != null) {
+            bootstrap = null;
+        }
         if (eventLoopGroup != null) {
             eventLoopGroup.close();
             eventLoopGroup = null;
         }
-        if (bootstrap != null) {
-            bootstrap = null;
-        }
         if (channel != null) {
-            channel.close().awaitUninterruptibly();
+            Netty4Utils.closeChannels(List.of(channel));
             channel = null;
         }
     }
@@ -207,33 +209,35 @@ public class PgClient implements Closeable {
             channel.pipeline().remove("decoder");
             channel.pipeline().remove("dispatcher");
 
-            ThreadPool threadPool = transport.getThreadPool();
-            RequestHandlers requestHandlers = transport.getRequestHandlers();
-            var inboundPipeline = new InboundPipeline(
-                transport.getVersion(),
-                transport.getStatsTracker(),
-                pageCacheRecycler,
-                threadPool::relativeTimeInMillis,
-                transport.getInflightBreaker(),
-                requestHandlers::getHandler,
-                transport::inboundMessage // TODO: use *this* ?
-            );
-            // var handler = new Netty4MessageChannelHandler(inboundPipeline, (tcpChannel, err) -> {});
-            //
+            // Internally this handler uses `ctx.channel().attr(Netty4Transport.CHANNEL_KEY)` as channel for communication
+            // So it won't use transport channel, but uses channels from *this* pipeline
+            var handler = new Netty4MessageChannelHandler(pageCacheRecycler, transport);
             channel.pipeline().addLast("dispatcher", handler);
 
+            Netty4TcpChannel netty4TcpChannel = channel.attr(Netty4Transport.CHANNEL_KEY).get();
 
-            // TODO: this would initialize a new channel using the nettyTransport,
-            // we already got a channel that should be re-used instead.
-            // Either use
-            //      new ChannelsConnectedListener(tcpTransport, node, connectionProfile, channels, listener)
-            // Or wrap transport and override `initiateChannel`
-            // transport.openConnection(
-            //     node,
-            //     ConnectionProfile.buildDefaultConnectionProfile(settings),
-            //     ActionListener.setCompletableFuture(result)
-            // );
-            result.completeExceptionally(new UnsupportedOperationException("NYI"));
+            // TODO: ChannelsConnetedListener expects multiple channels
+            // Either move away from using ChannelsConnectedListener or change connection logic to initiate multiple channels
+            ConnectionProfile connectionProfile = new ConnectionProfile.Builder()
+                .setConnectTimeout(TransportSettings.CONNECT_TIMEOUT.get(settings))
+                .setHandshakeTimeout(TransportSettings.CONNECT_TIMEOUT.get(settings))
+                .setPingInterval(TransportSettings.PING_SCHEDULE.get(settings))
+                .setCompressionEnabled(TransportSettings.TRANSPORT_COMPRESS.get(settings))
+                .addConnections(1, TransportRequestOptions.Type.BULK)
+                .addConnections(1, TransportRequestOptions.Type.PING)
+                .addConnections(1, TransportRequestOptions.Type.STATE)
+                .addConnections(1, TransportRequestOptions.Type.RECOVERY)
+                .addConnections(1, TransportRequestOptions.Type.REG)
+                .build();
+            ChannelsConnectedListener channelsConnectedListener = new ChannelsConnectedListener(
+                transport,
+                node,
+                connectionProfile,
+                List.of(netty4TcpChannel),
+                ActionListener.setCompletableFuture(result)
+            );
+
+            netty4TcpChannel.addConnectListener(channelsConnectedListener);
         }
 
         private void handleParameterStatus(ByteBuf msg) {

@@ -40,6 +40,7 @@ import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.transport.Transport.Connection;
 
 import io.crate.action.FutureActionListener;
 import io.crate.common.collections.Lists2;
@@ -51,6 +52,8 @@ import io.crate.types.DataTypes;
 
 
 public class RemoteCluster implements Closeable {
+
+
 
     public enum ConnectionStrategy {
         SNIFF,
@@ -144,28 +147,16 @@ public class RemoteCluster implements Closeable {
         if (hosts.isEmpty()) {
             return CompletableFuture.failedFuture(new IllegalArgumentException("No hosts configured for pg tunnel"));
         }
-        PgClient client = pgClientFactory.createClient(toDiscoveryNode(hosts.get(0)));
-        // TODO: move to inner static class or something
-        return client.connect().thenApply(connection -> new AbstractClient(settings, threadPool) {
-
-            protected <Request extends TransportRequest, Response extends TransportResponse> void doExecute(
-                    ActionType<Response> action,
-                    Request request,
-                    ActionListener<Response> listener) {
-
-                transportService.sendRequest(
-                    connection,
-                    action.name(),
-                    request,
-                    TransportRequestOptions.EMPTY,
-                    new ActionListenerResponseHandler<>(listener, action.getResponseReader())
-                );
+        PgClient pgClient = pgClientFactory.createClient(toDiscoveryNode(hosts.get(0)));
+        toClose.add(pgClient);
+        // TODO: should the client do implicit reconnects?
+        // TODO: should `ConnectedPgClient` be a implementation detail of `PgClient` ?
+        return pgClient.connect().thenApply(connection -> {
+            ConnectedPgClient connectedPgClient = new ConnectedPgClient(settings, threadPool, connection, pgClient);
+            if (this.client == null) {
+                this.client = connectedPgClient;
             }
-
-            @Override
-            public void close() {
-                connection.close();
-            };
+            return connectedPgClient;
         });
     }
 
@@ -186,9 +177,57 @@ public class RemoteCluster implements Closeable {
     private DiscoveryNode toDiscoveryNode(String seedNode) {
         TransportAddress transportAddress = new TransportAddress(RemoteConnectionParser.parseConfiguredAddress(seedNode));
         return new DiscoveryNode(
-            clusterName + "#" + transportAddress.toString(),
+            "RemoteCluster=" + clusterName + "#" + transportAddress.toString(),
             transportAddress,
             Version.CURRENT.minimumCompatibilityVersion()
         );
+    }
+
+    private final class ConnectedPgClient extends AbstractClient {
+        private final Connection connection;
+        private final PgClient client;
+
+        private ConnectedPgClient(Settings settings,
+                                  ThreadPool threadPool,
+                                  Connection connection,
+                                  PgClient client) {
+            super(settings, threadPool);
+            this.connection = connection;
+            this.client = client;
+        }
+
+        protected <Request extends TransportRequest, Response extends TransportResponse> void doExecute(
+                ActionType<Response> action,
+                Request request,
+                ActionListener<Response> listener) {
+
+            // TODO: Remove, this is temporary to be able to set breakpoints
+            var wrappedListener = new ActionListener<Response>() {
+
+                @Override
+                public void onResponse(Response response) {
+                    listener.onResponse(response);
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    e.printStackTrace();
+                    listener.onFailure(e);
+                }
+            };
+            transportService.sendRequest(
+                connection,
+                action.name(),
+                request,
+                TransportRequestOptions.EMPTY,
+                new ActionListenerResponseHandler<>(wrappedListener, action.getResponseReader())
+            );
+        }
+
+        @Override
+        public void close() {
+            connection.close();
+            IOUtils.closeWhileHandlingException(client);
+        }
     }
 }
