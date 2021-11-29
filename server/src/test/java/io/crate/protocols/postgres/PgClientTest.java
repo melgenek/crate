@@ -34,6 +34,7 @@ import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionListenerResponseHandler;
 import org.elasticsearch.action.ActionType;
+import org.elasticsearch.client.Client;
 import org.elasticsearch.client.support.AbstractClient;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
@@ -119,13 +120,6 @@ public class PgClientTest {
         TransportAddress serverAddress = postgresNetty.boundAddress().publishAddress();
         DiscoveryNode serverHost = new DiscoveryNode("server", serverAddress, Version.CURRENT);
         DiscoveryNode localNode = new DiscoveryNode("client", serverAddress, Version.CURRENT);
-        var pgClient = new PgClient(clientSettings, nettyBootstrap, clientTransport, pageCacheRecycler, serverHost);
-
-        CompletableFuture<Connection> connect = pgClient.connect();
-        Connection connection = connect.get(120, TimeUnit.SECONDS);
-        System.out.println(connection);
-        assertThat(connection.getNode(), is(serverHost));
-
         var clientTransportService = new TransportService(
             clientSettings,
             clientTransport,
@@ -133,26 +127,22 @@ public class PgClientTest {
             address -> localNode,
             null
         );
-        var client = new AbstractClient(clientSettings, threadPool) {
+        var pgClient = new PgClient(
+            clientSettings,
+            clientTransportService,
+            nettyBootstrap,
+            clientTransport,
+            pageCacheRecycler,
+            serverHost
+        );
 
-            @Override
-            public void close() {
-            }
+        CompletableFuture<Connection> connect = pgClient.connect();
+        Connection connection = connect.get(120, TimeUnit.SECONDS);
+        System.out.println(connection);
+        assertThat(connection.getNode(), is(serverHost));
 
-            @Override
-            protected <Request extends TransportRequest, Response extends TransportResponse> void doExecute(ActionType<Response> action,
-                                                                                                            Request request,
-                                                                                                            ActionListener<Response> listener) {
-                clientTransportService.sendRequest(
-                    connection,
-                    action.name(),
-                    request,
-                    TransportRequestOptions.EMPTY,
-                    new ActionListenerResponseHandler<>(listener, action.getResponseReader())
-                );
-            }
-        };
-
+        // TODO: actions are not registered
+        Client remoteClient = pgClient.getRemoteClient(connection);
         // FutureActionListener<PublicationsStateAction.Response, PublicationsStateAction.Response> listener = FutureActionListener.newInstance();
         // client.execute(
         //     PublicationsStateAction.INSTANCE,
@@ -160,13 +150,12 @@ public class PgClientTest {
         //     listener
         // );
 
-
         // io.crate.replication.logical.action.PublicationsStateAction.Response response = listener.get(5, TimeUnit.SECONDS);
 
         // System.out.println(response);
 
         postgresNetty.close();
         pgClient.close();
-        client.close();
+        remoteClient.close();
     }
 }

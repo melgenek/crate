@@ -26,6 +26,7 @@ import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Singleton;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.PageCacheRecycler;
+import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.transport.netty4.Netty4Transport;
 
 import io.crate.netty.NettyBootstrap;
@@ -41,22 +42,25 @@ import io.crate.netty.NettyBootstrap;
 public class PgClientFactory {
 
     private final Settings settings;
+    private final TransportService transportService;
     private final NettyBootstrap nettyBootstrap;
     private final Netty4Transport transport;
     private final PageCacheRecycler pageCacheRecycler;
 
     @Inject
     public PgClientFactory(Settings settings,
+                           TransportService transportService,
                            Netty4Transport transport,
                            PageCacheRecycler pageCacheRecycler,
                            NettyBootstrap nettyBootstrap) {
         this.settings = settings;
+        this.transportService = transportService;
         this.transport = transport;
         this.pageCacheRecycler = pageCacheRecycler;
         this.nettyBootstrap = nettyBootstrap;
     }
 
     public PgClient createClient(DiscoveryNode host) {
-        return new PgClient(settings, nettyBootstrap, transport, pageCacheRecycler, host);
+        return new PgClient(settings, transportService, nettyBootstrap, transport, pageCacheRecycler, host);
     }
 }

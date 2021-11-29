@@ -29,17 +29,23 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.ActionListenerResponseHandler;
+import org.elasticsearch.action.ActionType;
+import org.elasticsearch.client.Client;
+import org.elasticsearch.client.support.AbstractClient;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.PageCacheRecycler;
+import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.ChannelsConnectedListener;
 import org.elasticsearch.transport.ConnectionProfile;
-import org.elasticsearch.transport.TcpChannel;
-import org.elasticsearch.transport.Transport;
+import org.elasticsearch.transport.RemoteClusterAwareRequest;
+import org.elasticsearch.transport.RemoteConnectionManager.ProxyConnection;
 import org.elasticsearch.transport.Transport.Connection;
-import org.elasticsearch.transport.TransportException;
 import org.elasticsearch.transport.TransportRequest;
 import org.elasticsearch.transport.TransportRequestOptions;
+import org.elasticsearch.transport.TransportResponse;
+import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.transport.TransportSettings;
 import org.elasticsearch.transport.netty4.Netty4MessageChannelHandler;
 import org.elasticsearch.transport.netty4.Netty4TcpChannel;
@@ -47,6 +53,7 @@ import org.elasticsearch.transport.netty4.Netty4Transport;
 import org.elasticsearch.transport.netty4.Netty4Utils;
 
 import io.crate.common.collections.BorrowedItem;
+import io.crate.common.io.IOUtils;
 import io.crate.netty.NettyBootstrap;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
@@ -67,6 +74,7 @@ public class PgClient implements Closeable {
     private final Netty4Transport transport;
     private final PageCacheRecycler pageCacheRecycler;
     private final DiscoveryNode host;
+    private final TransportService transportService;
 
     private BorrowedItem<EventLoopGroup> eventLoopGroup;
     private Bootstrap bootstrap;
@@ -74,11 +82,13 @@ public class PgClient implements Closeable {
 
 
     public PgClient(Settings nodeSettings,
+                    TransportService transportService,
                     NettyBootstrap nettyBootstrap,
                     Netty4Transport transport,
                     PageCacheRecycler pageCacheRecycler,
                     DiscoveryNode host) {
         this.settings = nodeSettings;
+        this.transportService = transportService;
         this.nettyBootstrap = nettyBootstrap;
         this.transport = transport;
         this.pageCacheRecycler = pageCacheRecycler;
@@ -301,6 +311,75 @@ public class PgClient implements Closeable {
                 LENGTH_ADJUSTMENT,
                 INITIAL_BYTES_TO_STRIP
             );
+        }
+    }
+
+
+    public Client getRemoteClient(Connection connection) {
+        return new ConnectedPgClient(
+            settings,
+            transportService,
+            transportService.getThreadPool(),
+            connection
+        );
+    }
+
+    private final class ConnectedPgClient extends AbstractClient {
+        private final Connection connection;
+        private final TransportService transportService;
+
+        private ConnectedPgClient(Settings settings,
+                                  TransportService transportService,
+                                  ThreadPool threadPool,
+                                  Connection connection) {
+            super(settings, threadPool);
+            this.transportService = transportService;
+            this.connection = connection;
+        }
+
+        protected <Request extends TransportRequest, Response extends TransportResponse> void doExecute(
+                ActionType<Response> action,
+                Request request,
+                ActionListener<Response> listener) {
+
+            // TODO: Remove, this is temporary to be able to set breakpoints
+            var wrappedListener = new ActionListener<Response>() {
+
+                @Override
+                public void onResponse(Response response) {
+                    listener.onResponse(response);
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    listener.onFailure(e);
+                }
+            };
+
+            if (request instanceof RemoteClusterAwareRequest remoteClusterAware) {
+                DiscoveryNode targetNode = remoteClusterAware.getPreferredTargetNode();
+                transportService.sendRequest(
+                    new ProxyConnection(connection, targetNode),
+                    action.name(),
+                    request,
+                    TransportRequestOptions.EMPTY,
+                    new ActionListenerResponseHandler<>(wrappedListener, action.getResponseReader())
+                );
+            } else {
+                transportService.sendRequest(
+                    connection,
+                    action.name(),
+                    request,
+                    TransportRequestOptions.EMPTY,
+                    new ActionListenerResponseHandler<>(wrappedListener, action.getResponseReader())
+                );
+            }
+        }
+
+        @Override
+        public void close() {
+            // TODO: currently connection is closed by whoever provides the connection
+            // connection.close();
         }
     }
 }

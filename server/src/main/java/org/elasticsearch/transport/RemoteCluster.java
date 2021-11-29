@@ -40,6 +40,7 @@ import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.transport.RemoteConnectionManager.ProxyConnection;
 import org.elasticsearch.transport.Transport.Connection;
 
 import io.crate.action.FutureActionListener;
@@ -150,13 +151,13 @@ public class RemoteCluster implements Closeable {
         PgClient pgClient = pgClientFactory.createClient(toDiscoveryNode(hosts.get(0)));
         toClose.add(pgClient);
         // TODO: should the client do implicit reconnects?
-        // TODO: should `ConnectedPgClient` be a implementation detail of `PgClient` ?
         return pgClient.connect().thenApply(connection -> {
-            ConnectedPgClient connectedPgClient = new ConnectedPgClient(settings, threadPool, connection, pgClient);
+            var remoteClient = pgClient.getRemoteClient(connection);
             if (this.client == null) {
-                this.client = connectedPgClient;
+                this.client = remoteClient;
+                toClose.add(remoteClient);
             }
-            return connectedPgClient;
+            return remoteClient;
         });
     }
 
@@ -181,53 +182,5 @@ public class RemoteCluster implements Closeable {
             transportAddress,
             Version.CURRENT.minimumCompatibilityVersion()
         );
-    }
-
-    private final class ConnectedPgClient extends AbstractClient {
-        private final Connection connection;
-        private final PgClient client;
-
-        private ConnectedPgClient(Settings settings,
-                                  ThreadPool threadPool,
-                                  Connection connection,
-                                  PgClient client) {
-            super(settings, threadPool);
-            this.connection = connection;
-            this.client = client;
-        }
-
-        protected <Request extends TransportRequest, Response extends TransportResponse> void doExecute(
-                ActionType<Response> action,
-                Request request,
-                ActionListener<Response> listener) {
-
-            // TODO: Remove, this is temporary to be able to set breakpoints
-            var wrappedListener = new ActionListener<Response>() {
-
-                @Override
-                public void onResponse(Response response) {
-                    listener.onResponse(response);
-                }
-
-                @Override
-                public void onFailure(Exception e) {
-                    e.printStackTrace();
-                    listener.onFailure(e);
-                }
-            };
-            transportService.sendRequest(
-                connection,
-                action.name(),
-                request,
-                TransportRequestOptions.EMPTY,
-                new ActionListenerResponseHandler<>(wrappedListener, action.getResponseReader())
-            );
-        }
-
-        @Override
-        public void close() {
-            connection.close();
-            IOUtils.closeWhileHandlingException(client);
-        }
     }
 }
