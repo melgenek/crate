@@ -50,6 +50,7 @@ import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import javax.net.ssl.SNIHostName;
 
+import io.crate.replication.logical.ShardReplicationService;
 import org.apache.http.impl.conn.SystemDefaultDnsResolver;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -666,6 +667,7 @@ public class Node implements Closeable {
                 }
             );
             injector = modules.createInjector();
+            logicalReplicationService.shardReplicationServiceService(injector.getInstance(ShardReplicationService.class));
 
             // TODO hack around circular dependencies problems in AllocationService
             clusterModule.getAllocationService().setGatewayAllocator(injector.getInstance(GatewayAllocator.class));

@@ -44,6 +44,7 @@ import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.shard.IndexEventListener;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.indices.cluster.IndicesClusterStateService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.RemoteClusters;
@@ -63,6 +64,7 @@ public class ShardReplicationService implements Closeable {
     private final Map<ShardId, ShardReplicationChangesTracker> shards = new ConcurrentHashMap<>();
     private final Map<String, String> subscribedIndices = ConcurrentCollections.newConcurrentMap();
     private final RemoteClusters remoteClusters;
+    private final IndicesService indicesService;
 
     @Inject
     public ShardReplicationService(IndexEventListenerProxy indexEventListenerProxy,
@@ -71,13 +73,15 @@ public class ShardReplicationService implements Closeable {
                                    RemoteClusters remoteClusters,
                                    Client client,
                                    ThreadPool threadPool,
-                                   ClusterService clusterService) {
+                                   ClusterService clusterService,
+                                   IndicesService indicesService) {
         this.logicalReplicationService = logicalReplicationService;
         this.replicationSettings = replicationSettings;
         this.remoteClusters = remoteClusters;
         this.client = client;
         this.threadPool = threadPool;
         this.clusterName = clusterService.getClusterName();
+        this.indicesService = indicesService;
         indexEventListenerProxy.addLast(new LifecycleListener());
     }
 
@@ -149,24 +153,53 @@ public class ShardReplicationService implements Closeable {
                                            @Nullable IndexShard indexShard,
                                            Settings indexSettings) {
             var tracker = shards.remove(shardId);
-            if (tracker != null) {
-                try {
-                    tracker.close();
-                } catch (IOException e) {
-                    LOGGER.error("Error while closing shard changes tracker of shardId=" + shardId, e);
-                }
-            }
+            stopTracker(tracker, shardId);
         }
 
         @Override
         public void afterIndexShardDeleted(ShardId shardId, Settings indexSettings) {
             var tracker = shards.remove(shardId);
-            if (tracker != null) {
-                try {
-                    tracker.close();
-                } catch (IOException e) {
-                    LOGGER.error("Error while closing shard changes tracker of shardId=" + shardId, e);
+            stopTracker(tracker, shardId);
+        }
+    }
+
+    public synchronized void stopTrackingSubOnNode(String subscriptionName) {
+        subscribedIndices.entrySet()
+            .stream()
+            .filter(entry -> entry.getValue().equals(subscriptionName))
+            .map(entry -> indicesService.indexService(entry.getValue()))
+            .filter(indexService -> indexService != null)
+            .forEach(indexService -> {
+                var settings = indexService.getMetadata().getSettings();
+                var indexSubName = REPLICATION_SUBSCRIPTION_NAME.get(settings); // Can be null.
+                if (subscriptionName.equals(indexSubName)) {
+
+                    // 1.Remove setting LogicalReplicationSettings.REPLICATION_SUBSCRIPTION_NAME for each relevant for subscription index on ever node
+                    var settingsBuilder = Settings.builder().put(settings);
+                    settingsBuilder.remove(LogicalReplicationSettings.REPLICATION_SUBSCRIPTION_NAME.getKey());
+
+                    // 2.Close index - it will close all shards of the index
+                    //  -> will stop trackers of each shard via ShardReplicationService.beforeIndexShardClosed ->
+                    //  -> will remove retention lease on the remote cluster (tracker.close does attemptRetentionLeaseRemoval on remote cluster)
+                    try {
+                        indexService.close("stop-replication", false);
+                    } catch (IOException e) {
+                        LOGGER.error("Couldn't stop replication on index {}", indexService.indexUUID(), e);
+                    }
+
+                    // 3.Open/recreate index again with new settings
+                    // -> it will update DocInfo with the new normal engine because of setting update done in step 1
+                    // indexService = new IndexService()
                 }
+            });
+    }
+
+    private void stopTracker(@Nullable ShardReplicationChangesTracker tracker, ShardId shardId) {
+        if (tracker != null) {
+            try {
+                tracker.close();
+            } catch (IOException e) {
+                LOGGER.error("Error while closing shard changes tracker of shardId=" + shardId, e);
             }
         }
     }

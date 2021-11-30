@@ -60,6 +60,7 @@ import java.util.stream.Stream;
 
 import javax.annotation.Nullable;
 
+import io.crate.replication.logical.ShardReplicationService;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.Version;
@@ -316,6 +317,7 @@ public class SQLExecutor {
                 mock(ThreadPool.class)
             );
             logicalReplicationService.repositoriesService(mock(RepositoriesService.class));
+            logicalReplicationService.shardReplicationServiceService(mock(ShardReplicationService.class));
 
             publishInitialClusterState();
         }

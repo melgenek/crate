@@ -318,6 +318,11 @@ public class IndicesService extends AbstractLifecycleComponent
         return indices.get(index.getUUID());
     }
 
+    @Nullable
+    public IndexService indexService(String indexUUID) {
+        return indices.get(indexUUID);
+    }
+
     /**
      * Returns an IndexService for the specified index if exists otherwise a {@link IndexNotFoundException} is thrown.
      */
