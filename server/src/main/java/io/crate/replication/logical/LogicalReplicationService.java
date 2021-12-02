@@ -76,7 +76,6 @@ public class LogicalReplicationService implements ClusterStateListener, Closeabl
     private final RemoteClusters remoteClusters;
     private RepositoriesService repositoriesService;
     private RestoreService restoreService;
-    private ShardReplicationService shardReplicationService;
 
     private volatile SubscriptionsMetadata currentSubscriptionsMetadata = new SubscriptionsMetadata();
     private volatile PublicationsMetadata currentPublicationsMetadata = new PublicationsMetadata();
@@ -106,10 +105,6 @@ public class LogicalReplicationService implements ClusterStateListener, Closeabl
 
     public void restoreService(RestoreService restoreService) {
         this.restoreService = restoreService;
-    }
-
-    public void shardReplicationServiceService(ShardReplicationService shardReplicationService) {
-        this.shardReplicationService = shardReplicationService;
     }
 
     @Override
@@ -199,9 +194,6 @@ public class LogicalReplicationService implements ClusterStateListener, Closeabl
         LOGGER.debug("Removing logical replication repository for dropped subscription '{}'",
                      subscriptionName);
         repositoriesService.unregisterInternalRepository(REMOTE_REPOSITORY_PREFIX + subscriptionName);
-
-
-        shardReplicationService.stopTrackingSubOnNode(subscriptionName);
         metadataTracker.stopTracking(subscriptionName);
         remoteClusters.remove(subscriptionName);
     }
@@ -226,7 +218,6 @@ public class LogicalReplicationService implements ClusterStateListener, Closeabl
     @Override
     public void close() throws IOException {
         metadataTracker.close();
-        // shardReplicationService.close();
     }
 
     public void startReplication(String subscriptionName,

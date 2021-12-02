@@ -667,7 +667,6 @@ public class Node implements Closeable {
                 }
             );
             injector = modules.createInjector();
-            logicalReplicationService.shardReplicationServiceService(injector.getInstance(ShardReplicationService.class));
 
             // TODO hack around circular dependencies problems in AllocationService
             clusterModule.getAllocationService().setGatewayAllocator(injector.getInstance(GatewayAllocator.class));
@@ -984,6 +983,8 @@ public class Node implements Closeable {
         toClose.add(injector.getInstance(RemoteClusters.class));
         toClose.add(() -> stopWatch.stop().start("logical_replication_service"));
         toClose.add(injector.getInstance(LogicalReplicationService.class));
+        toClose.add(() -> stopWatch.stop().start("shard_replication_service"));
+        toClose.add(injector.getInstance(ShardReplicationService.class));
 
         toClose.add(() -> stopWatch.stop().start("gateway_meta_state"));
         toClose.add(injector.getInstance(GatewayMetaState.class));
