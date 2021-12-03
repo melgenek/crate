@@ -156,3 +156,6 @@ Fixes
 
 - Fixed an issue that could cause a deadlock, leading to an unavailable cluster
   if using blob tables and uploading multiple files in parallel.
+
+- Fixed an issue that caused `generated columns` to become non-generated columns
+  when a new column has been added to the table by `ALTER TABLE` statements.
