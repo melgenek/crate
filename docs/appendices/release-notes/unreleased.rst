@@ -143,6 +143,10 @@ Changes
 - Enabled the setting of most prototype methods for JavaScript Objects (e.g. 
   Array.prototype, Object.prototype) in :ref:`user-defined functions <user-defined-functions>`
 
+- Exposed `host` and `port` and a ``WITH`` clause parameter `protocol` to allow
+  users to be able to specify different S3 compatible storage for ``COPY``
+  statements.
+
 Fixes
 =====
 
